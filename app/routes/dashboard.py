@@ -1,17 +1,14 @@
 from fastapi import APIRouter, Depends, Header, HTTPException
-from typing import List, Optional, Dict
+from typing import List
 import os
 import jwt
 import httpx
-import json
 from ..services.redis_service import RedisService
 from ..models.dashboard import (
     DashboardStatsResponse,
     CallVolumeData,
     CustomerSatisfactionData,
-    IncidentResponse,
-    PriorityDistribution,
-    ChannelDistribution
+    IncidentResponse
 )
 
 router = APIRouter(
@@ -45,18 +42,24 @@ async def get_dashboard_stats(
     current_user: dict = Depends(get_current_user),
     client: httpx.AsyncClient = Depends(get_http_client)
 ):
-    """Get key dashboard statistics"""
-    cached_stats = RedisService.get_dashboard_stats(current_user['sub'])
-    if cached_stats:
-        return DashboardStatsResponse(**cached_stats)
-
+    """Get dashboard statistics"""
     try:
-        incidents = await get_recent_incidents(current_user, client)
-        stats = calculate_incident_stats(incidents)
-        RedisService.cache_dashboard_stats(current_user['sub'], stats, CACHE_EXPIRATION) 
-        return stats
+        headers = {"Authorization": f"Bearer {jwt.encode(current_user, SECRET_KEY, algorithm=ALGORITHM)}"}
+        response = await client.get(f"{INCIDENT_QUERY_URL}/dashboard-stats", headers=headers)
+        response.raise_for_status()
+        
+        stats = response.json()
+        
+        return DashboardStatsResponse(
+            totalCalls=stats['total_calls'],
+            averageHandlingTime=0,
+            customerSatisfaction=0,
+            openTickets=stats['open_tickets']
+        )
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching dashboard stats: {str(e)}")
 
 @router.get("/recent-incidents", response_model=List[IncidentResponse])
 async def get_recent_incidents(
@@ -147,55 +150,3 @@ async def clear_user_cache(
     if success:
         return {"message": "Cache cleared successfully"}
     raise HTTPException(status_code=500, detail="Failed to clear cache")
-
-# Helper functions for calculations
-def calculate_incident_stats(incidents: List[IncidentResponse]) -> DashboardStatsResponse:
-    """Calculate statistics from incidents data"""
-    total = len(incidents)
-    states = {"open": 0, "in_progress": 0, "closed": 0, "escalated": 0}
-    
-    for incident in incidents:
-        states[incident.state] += 1
-    
-    # This would need to be calculated from actual response time data
-    avg_response_time = 25.5  # Mock average response time in minutes
-    satisfaction_rate = 88.5  # Mock satisfaction rate
-    
-    return DashboardStatsResponse(
-        total_incidents=total,
-        open_incidents=states["open"],
-        in_progress_incidents=states["in_progress"],
-        closed_incidents=states["closed"],
-        escalated_incidents=states["escalated"],
-        satisfaction_rate=satisfaction_rate,
-        average_response_time=avg_response_time
-    )
-
-def calculate_priority_distribution(incidents: List[IncidentResponse]) -> PriorityDistribution:
-    """Calculate priority distribution from incidents"""
-    priorities = {"low": 0, "medium": 0, "high": 0}
-    
-    for incident in incidents:
-        priorities[incident.priority] += 1
-    
-    return PriorityDistribution(
-        low=priorities["low"],
-        medium=priorities["medium"],
-        high=priorities["high"],
-        total=len(incidents)
-    )
-
-def calculate_channel_distribution(incidents: List[IncidentResponse]) -> ChannelDistribution:
-    """Calculate channel distribution from incidents"""
-    channels = {"phone": 0, "email": 0, "chat": 0, "mobile": 0}
-    
-    for incident in incidents:
-        channels[incident.channel] += 1
-    
-    return ChannelDistribution(
-        phone=channels["phone"],
-        email=channels["email"],
-        chat=channels["chat"],
-        mobile=channels["mobile"],
-        total=len(incidents)
-    )
