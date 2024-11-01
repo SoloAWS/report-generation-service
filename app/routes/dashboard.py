@@ -63,14 +63,20 @@ async def get_recent_incidents(
     current_user: dict = Depends(get_current_user),
     client: httpx.AsyncClient = Depends(get_http_client)
 ):
-    """Get list of recent incidents"""
+    """Get list of recent incidents for company users only"""
+    if current_user.get('user_type') != 'company':
+        raise HTTPException(
+            status_code=403,
+            detail="Only company users can access this endpoint"
+        )
+
     cached_incidents = RedisService.get_recent_incidents(current_user['sub'])
     if cached_incidents:
         return [IncidentResponse(**incident) for incident in cached_incidents]
 
     try:
         headers = {"Authorization": f"Bearer {jwt.encode(current_user, SECRET_KEY, algorithm=ALGORITHM)}"}
-        response = await client.get(f"{INCIDENT_QUERY_URL}/all-incidents", headers=headers)
+        response = await client.get(f"{INCIDENT_QUERY_URL}/company-incidents", headers=headers)
         response.raise_for_status()
         
         incidents_data = response.json()
