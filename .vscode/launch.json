@@ -12,7 +12,11 @@
         "--port",
         "8009"
       ],
-      "jinja": true
+      "jinja": true,
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
     }
   ]
 }
