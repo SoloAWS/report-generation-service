@@ -58,3 +58,13 @@ class CustomerSatisfactionData(BaseModel):
     average_score: float
     total_responses: int
     positive_feedback_percentage: float
+
+
+class CallVolumeDataset(BaseModel):
+    label: str
+    data: List[int]
+    backgroundColor: str
+
+class CallVolumeResponse(BaseModel):
+    labels: List[str]
+    datasets: List[CallVolumeDataset]
