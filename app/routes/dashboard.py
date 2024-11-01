@@ -1,17 +1,16 @@
 from fastapi import APIRouter, Depends, Header, HTTPException
-from typing import List, Optional, Dict
+from typing import List
 import os
 import jwt
 import httpx
-import json
 from ..services.redis_service import RedisService
 from ..models.dashboard import (
+    CallVolumeDataset,
+    CallVolumeResponse,
     DashboardStatsResponse,
     CallVolumeData,
     CustomerSatisfactionData,
-    IncidentResponse,
-    PriorityDistribution,
-    ChannelDistribution
+    IncidentResponse
 )
 
 router = APIRouter(
@@ -45,32 +44,44 @@ async def get_dashboard_stats(
     current_user: dict = Depends(get_current_user),
     client: httpx.AsyncClient = Depends(get_http_client)
 ):
-    """Get key dashboard statistics"""
-    cached_stats = RedisService.get_dashboard_stats(current_user['sub'])
-    if cached_stats:
-        return DashboardStatsResponse(**cached_stats)
-
+    """Get dashboard statistics"""
     try:
-        incidents = await get_recent_incidents(current_user, client)
-        stats = calculate_incident_stats(incidents)
-        RedisService.cache_dashboard_stats(current_user['sub'], stats, CACHE_EXPIRATION) 
-        return stats
+        headers = {"Authorization": f"Bearer {jwt.encode(current_user, SECRET_KEY, algorithm=ALGORITHM)}"}
+        response = await client.get(f"{INCIDENT_QUERY_URL}/dashboard-stats", headers=headers)
+        response.raise_for_status()
+        
+        stats = response.json()
+        
+        return DashboardStatsResponse(
+            totalCalls=stats['total_calls'],
+            averageHandlingTime=0,
+            customerSatisfaction=0,
+            openTickets=stats['open_tickets']
+        )
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching dashboard stats: {str(e)}")
 
 @router.get("/recent-incidents", response_model=List[IncidentResponse])
 async def get_recent_incidents(
     current_user: dict = Depends(get_current_user),
     client: httpx.AsyncClient = Depends(get_http_client)
 ):
-    """Get list of recent incidents"""
+    """Get list of recent incidents for company users only"""
+    if current_user.get('user_type') != 'company':
+        raise HTTPException(
+            status_code=403,
+            detail="Only company users can access this endpoint"
+        )
+
     cached_incidents = RedisService.get_recent_incidents(current_user['sub'])
     if cached_incidents:
         return [IncidentResponse(**incident) for incident in cached_incidents]
 
     try:
         headers = {"Authorization": f"Bearer {jwt.encode(current_user, SECRET_KEY, algorithm=ALGORITHM)}"}
-        response = await client.get(f"{INCIDENT_QUERY_URL}/all-incidents", headers=headers)
+        response = await client.get(f"{INCIDENT_QUERY_URL}/company-incidents", headers=headers)
         response.raise_for_status()
         
         incidents_data = response.json()
@@ -82,30 +93,49 @@ async def get_recent_incidents(
     except httpx.RequestError as e:
         raise HTTPException(status_code=500, detail=f"Error connecting to incident service: {str(e)}")
 
-@router.get("/call-volume", response_model=CallVolumeData)
+@router.get("/call-volume", response_model=CallVolumeResponse)
 async def get_call_volume_data(
     current_user: dict = Depends(get_current_user),
     client: httpx.AsyncClient = Depends(get_http_client)
 ):
-    """Get call volume trends"""
-    cached_data = RedisService.get_call_volume(current_user['sub'])
-    if cached_data:
-        return CallVolumeData(**cached_data)
-
+    """Get call volume data aggregated by hour"""
     try:
-        # Mock data for now
-        data = CallVolumeData(
-            labels=["00:00", "04:00", "08:00", "12:00", "16:00", "20:00"],
-            values=[10, 5, 35, 45, 40, 20],
-            trend=[],
-            total_calls=155,
-            peak_hour="12:00",
-            lowest_hour="04:00"
+        # Get call volume data from incident-query service
+        headers = {"Authorization": f"Bearer {jwt.encode(current_user, SECRET_KEY, algorithm=ALGORITHM)}"}
+        response = await client.get(f"{INCIDENT_QUERY_URL}/call-volume", headers=headers)
+        
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Error from incident service: {response.text}"
+            )
+
+        hourly_data = response.json()
+        
+        # Format response for frontend
+        return CallVolumeResponse(
+            labels=[
+                '00:00', '03:00', '06:00', '09:00',
+                '12:00', '15:00', '18:00', '21:00'
+            ],
+            datasets=[
+                CallVolumeDataset(
+                    label="Llamadas",
+                    data=hourly_data['hourly_counts'],
+                    backgroundColor="#4CAF50"
+                )
+            ]
         )
-        RedisService.cache_call_volume(current_user['sub'], data, CACHE_EXPIRATION) 
-        return data
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error connecting to incident service: {str(e)}"
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching call volume data: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching call volume data: {str(e)}"
+        )
 
 @router.get("/satisfaction", response_model=CustomerSatisfactionData)
 async def get_customer_satisfaction_data(
@@ -141,55 +171,3 @@ async def clear_user_cache(
     if success:
         return {"message": "Cache cleared successfully"}
     raise HTTPException(status_code=500, detail="Failed to clear cache")
-
-# Helper functions for calculations
-def calculate_incident_stats(incidents: List[IncidentResponse]) -> DashboardStatsResponse:
-    """Calculate statistics from incidents data"""
-    total = len(incidents)
-    states = {"open": 0, "in_progress": 0, "closed": 0, "escalated": 0}
-    
-    for incident in incidents:
-        states[incident.state] += 1
-    
-    # This would need to be calculated from actual response time data
-    avg_response_time = 25.5  # Mock average response time in minutes
-    satisfaction_rate = 88.5  # Mock satisfaction rate
-    
-    return DashboardStatsResponse(
-        total_incidents=total,
-        open_incidents=states["open"],
-        in_progress_incidents=states["in_progress"],
-        closed_incidents=states["closed"],
-        escalated_incidents=states["escalated"],
-        satisfaction_rate=satisfaction_rate,
-        average_response_time=avg_response_time
-    )
-
-def calculate_priority_distribution(incidents: List[IncidentResponse]) -> PriorityDistribution:
-    """Calculate priority distribution from incidents"""
-    priorities = {"low": 0, "medium": 0, "high": 0}
-    
-    for incident in incidents:
-        priorities[incident.priority] += 1
-    
-    return PriorityDistribution(
-        low=priorities["low"],
-        medium=priorities["medium"],
-        high=priorities["high"],
-        total=len(incidents)
-    )
-
-def calculate_channel_distribution(incidents: List[IncidentResponse]) -> ChannelDistribution:
-    """Calculate channel distribution from incidents"""
-    channels = {"phone": 0, "email": 0, "chat": 0, "mobile": 0}
-    
-    for incident in incidents:
-        channels[incident.channel] += 1
-    
-    return ChannelDistribution(
-        phone=channels["phone"],
-        email=channels["email"],
-        chat=channels["chat"],
-        mobile=channels["mobile"],
-        total=len(incidents)
-    )
