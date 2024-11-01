@@ -34,13 +34,10 @@ class IncidentResponse(BaseModel):
     manager_id: Optional[UUID] = None
 
 class DashboardStatsResponse(BaseModel):
-    total_incidents: int
-    open_incidents: int
-    in_progress_incidents: int
-    closed_incidents: int
-    escalated_incidents: int
-    satisfaction_rate: float = Field(ge=0, le=100)
-    average_response_time: float  # in minutes
+    totalCalls: int
+    averageHandlingTime: int
+    customerSatisfaction: int
+    openTickets: int
 
 class TimeSeriesData(BaseModel):
     timestamp: datetime
@@ -62,24 +59,12 @@ class CustomerSatisfactionData(BaseModel):
     total_responses: int
     positive_feedback_percentage: float
 
-class PriorityDistribution(BaseModel):
-    low: int
-    medium: int
-    high: int
-    total: int
 
-class ChannelDistribution(BaseModel):
-    phone: int
-    email: int
-    chat: int
-    mobile: int
-    total: int
+class CallVolumeDataset(BaseModel):
+    label: str
+    data: List[int]
+    backgroundColor: str
 
-class DashboardOverviewResponse(BaseModel):
-    stats: DashboardStatsResponse
-    recent_incidents: List[IncidentResponse]
-    call_volume: CallVolumeData
-    customer_satisfaction: CustomerSatisfactionData
-    priority_distribution: PriorityDistribution
-    channel_distribution: ChannelDistribution
-    last_updated: datetime
+class CallVolumeResponse(BaseModel):
+    labels: List[str]
+    datasets: List[CallVolumeDataset]
