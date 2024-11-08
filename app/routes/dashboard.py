@@ -19,7 +19,7 @@ router = APIRouter(
 )
 
 # Environment variables
-INCIDENT_QUERY_URL = os.getenv("INCIDENT_QUERY_URL", "http://localhost:8006/incident-query")
+INCIDENT_QUERY_URL = os.getenv("QUERY_INCIDENT_SERVICE_URL", "http://localhost:8006/incident-query")
 SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'secret_key')
 ALGORITHM = "HS256"
 CACHE_EXPIRATION = int(os.getenv('CACHE_EXPIRATION_SECONDS', 300))  # 5 minutes default
